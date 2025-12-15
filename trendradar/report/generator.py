@@ -10,6 +10,8 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
 
+import json
+
 
 def prepare_report_data(
     stats: List[Dict],
@@ -136,6 +138,120 @@ def prepare_report_data(
         ),
     }
 
+def _build_platform_index_items(
+    report_data: Dict, *, per_platform_limit: int = 10
+) -> List[Dict]:
+    """
+    构建按平台聚合的扁平 JSON 视图：
+    - 不再按频率词组分组展示
+    - 平台内去重与排序，平台间不去重
+    """
+
+    def get_min_rank(ranks: List) -> int:
+        try:
+            return int(min(ranks)) if ranks else 999
+        except Exception:
+            return 999
+
+    per_platform: Dict[str, Dict] = {}
+
+    for stat in report_data.get("stats", []):
+        group_key = stat.get("word", "") or ""
+
+        for title_data in stat.get("titles", []):
+            platform = title_data.get("source_name") or "unknown"
+            url = title_data.get("url") or ""
+            title = title_data.get("title") or ""
+            mobile_url = title_data.get("mobile_url") or ""
+
+            if not title and not url:
+                continue
+
+            dedupe_key = url if url else title
+
+            if platform not in per_platform:
+                per_platform[platform] = {
+                    "name": platform,
+                    "items_by_key": {},
+                    "items": [],
+                }
+
+            platform_bucket = per_platform[platform]
+
+            if dedupe_key not in platform_bucket["items_by_key"]:
+                item = {
+                    "title": title,
+                    "platform": platform,
+                    "time_display": title_data.get("time_display", ""),
+                    "count": title_data.get("count", 1),
+                    "ranks": title_data.get("ranks", []),
+                    "min_rank": get_min_rank(title_data.get("ranks", [])),
+                    "url": url,
+                    "mobile_url": mobile_url,
+                    "is_new": bool(title_data.get("is_new", False)),
+                    "matched_words": [],
+                }
+                platform_bucket["items_by_key"][dedupe_key] = item
+                platform_bucket["items"].append(item)
+
+            item = platform_bucket["items_by_key"][dedupe_key]
+
+            if group_key and group_key not in item["matched_words"]:
+                item["matched_words"].append(group_key)
+
+            incoming_is_new = bool(title_data.get("is_new", False))
+            if incoming_is_new:
+                item["is_new"] = True
+
+            incoming_count = title_data.get("count", 1)
+            try:
+                incoming_count_int = int(incoming_count)
+            except Exception:
+                incoming_count_int = 1
+
+            if incoming_count_int > item["count"]:
+                item["count"] = incoming_count_int
+
+            incoming_min_rank = get_min_rank(title_data.get("ranks", []))
+            if incoming_min_rank < item["min_rank"]:
+                item["min_rank"] = incoming_min_rank
+                item["ranks"] = title_data.get("ranks", [])
+
+            if not item["time_display"] and title_data.get("time_display"):
+                item["time_display"] = title_data.get("time_display", "")
+
+            if not item["mobile_url"] and mobile_url:
+                item["mobile_url"] = mobile_url
+
+            if not item["url"] and url:
+                item["url"] = url
+
+    output_platforms: List[Dict] = []
+    for platform_name, bucket in per_platform.items():
+        items = bucket["items"]
+        items.sort(
+            key=lambda x: (
+                0 if x.get("is_new") else 1,
+                x.get("min_rank", 999),
+                -int(x.get("count", 1)),
+                x.get("title", ""),
+            )
+        )
+
+        top_items = items[:per_platform_limit]
+        for item in top_items:
+            item.pop("min_rank", None)
+
+        output_platforms.append(
+            {
+                "platform": platform_name,
+                "total_items": len(items),
+                "items": top_items,
+            }
+        )
+
+    return output_platforms
+
 
 def generate_html_report(
     stats: List[Dict],
@@ -226,10 +342,28 @@ def generate_html_report(
         with open(root_index_path, "w", encoding="utf-8") as f:
             f.write(html_content)
 
+        # 同步生成去掉词组分组的 JSON（与 index.html 对应）
+        index_json = {
+            "mode": mode,
+            "is_daily_summary": is_daily_summary,
+            "total_titles": total_titles,
+            "total_new_count": report_data.get("total_new_count", 0),
+            "failed_ids": report_data.get("failed_ids", []),
+            "new_titles": report_data.get("new_titles", []),
+            "platform_limit": 10,
+            "platforms": _build_platform_index_items(report_data, per_platform_limit=10),
+            "update_info": update_info,
+        }
+        with open(Path("index.json"), "w", encoding="utf-8") as f:
+            json.dump(index_json, f, ensure_ascii=False, indent=2)
+
         # 同时生成到 output 目录（供 Docker Volume 挂载访问）
         output_index_path = Path(output_dir) / "index.html"
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         with open(output_index_path, "w", encoding="utf-8") as f:
             f.write(html_content)
+
+        with open(Path(output_dir) / "index.json", "w", encoding="utf-8") as f:
+            json.dump(index_json, f, ensure_ascii=False, indent=2)
 
     return file_path
