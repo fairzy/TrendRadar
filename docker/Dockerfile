@@ -13,6 +13,26 @@ RUN set -ex && \
     /usr/local/bin/supercronic -version
 
 RUN set -ex && \
+    if [ -f /etc/apt/sources.list ]; then \
+        sed -i \
+            -e 's|http://deb.debian.org/debian|http://mirrors.cloud.tencent.com/debian|g' \
+            -e 's|https://deb.debian.org/debian|http://mirrors.cloud.tencent.com/debian|g' \
+            -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            -e 's|https://deb.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            -e 's|http://security.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            -e 's|https://security.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            /etc/apt/sources.list; \
+    fi && \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i \
+            -e 's|http://deb.debian.org/debian|http://mirrors.cloud.tencent.com/debian|g' \
+            -e 's|https://deb.debian.org/debian|http://mirrors.cloud.tencent.com/debian|g' \
+            -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            -e 's|https://deb.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            -e 's|http://security.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            -e 's|https://security.debian.org/debian-security|http://mirrors.cloud.tencent.com/debian-security|g' \
+            /etc/apt/sources.list.d/debian.sources; \
+    fi && \
     apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     apt-get clean && \
